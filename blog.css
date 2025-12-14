@@ -42,7 +42,7 @@ article h3 {
     font-weight: 600;
     margin: 1.2rem 0 0.6rem 0;
 }
-article p { margin-bottom: 0.9rem; text-align: justify; }
+article p { margin-bottom: 0.9rem; }
 article a { color: #1a1a1a; text-decoration: underline; transition: opacity 0.3s; }
 article a:hover { opacity: 0.7; }
 article ul, article ol { margin-left: 2rem; margin-bottom: 1.5rem; }
@@ -125,6 +125,10 @@ p:has(img) em, img + em {
 }
 
 @media (max-width: 768px) {
-    header h1 { font-size: 2rem; }
-    body { padding: 1rem; }
+    body { font-size: 20px; padding: 1rem; line-height: 1.6; }
+    header h1 { font-size: 1.75rem; letter-spacing: 1px; }
+    article h2 { font-size: 1.5rem; letter-spacing: 1px; }
+    article h3 { font-size: 1.15rem; }
+    blockquote { font-size: 1rem; padding: 1rem; }
+    pre code { font-size: 0.8rem; }
 }
