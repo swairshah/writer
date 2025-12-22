@@ -11,6 +11,7 @@ await mkdir(HTML_DIR, { recursive: true });
 
 Bun.serve({
   port: 3000,
+  hostname: "0.0.0.0",
   routes: {
     "/": index,
     "/blog": {
@@ -197,14 +198,20 @@ Bun.serve({
       GET: async () => {
         try {
           const files = await readdir(MARKDOWN_DIR);
-          const posts = files
-            .filter(f => f.endsWith('.md'))
-            .map(f => ({
-              filename: f,
-              name: f.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace('.md', '').replace(/-/g, ' '),
-              date: f.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || '',
-            }))
-            .sort((a, b) => b.date.localeCompare(a.date));
+          const posts = await Promise.all(
+            files
+              .filter(f => f.endsWith('.md'))
+              .map(async (f) => {
+                const content = await Bun.file(`${MARKDOWN_DIR}/${f}`).text();
+                const title = content.match(/^#\s+(.+)$/m)?.[1] || f.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace('.md', '').replace(/-/g, ' ');
+                return {
+                  filename: f,
+                  name: title,
+                  date: f.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || '',
+                };
+              })
+          );
+          posts.sort((a, b) => b.date.localeCompare(a.date));
 
           return new Response(JSON.stringify(posts), {
             headers: { "Content-Type": "application/json" },
@@ -236,7 +243,7 @@ Bun.serve({
     "/api/save": {
       POST: async (req) => {
         try {
-          const { filename, markdown, html } = await req.json();
+          const { filename, markdown, html, existingFilename } = await req.json();
 
           if (!filename) {
             return new Response(JSON.stringify({ error: "Filename required" }), {
@@ -245,15 +252,24 @@ Bun.serve({
             });
           }
 
-          const safeName = filename.replace(/[^a-zA-Z0-9-_]/g, "-");
-          const timestamp = new Date().toISOString().split("T")[0];
-          const baseName = `${timestamp}-${safeName}`;
+          let baseName: string;
+
+          if (existingFilename) {
+            // Editing existing post - use the existing filename (without .md extension)
+            baseName = existingFilename.replace('.md', '');
+          } else {
+            // Creating new post - generate new filename with today's date
+            const safeName = filename.replace(/[^a-zA-Z0-9-_]/g, "-");
+            const timestamp = new Date().toISOString().split("T")[0];
+            baseName = `${timestamp}-${safeName}`;
+          }
 
           await Bun.write(`${MARKDOWN_DIR}/${baseName}.md`, markdown);
           await Bun.write(`${HTML_DIR}/${baseName}.html`, html);
 
           return new Response(JSON.stringify({
             success: true,
+            filename: `${baseName}.md`,
             files: {
               markdown: `${MARKDOWN_DIR}/${baseName}.md`,
               html: `${HTML_DIR}/${baseName}.html`,

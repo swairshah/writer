@@ -110,6 +110,13 @@ const FolderIcon = () => (
   </svg>
 );
 
+const PlusIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="12" y1="5" x2="12" y2="19"/>
+    <line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+);
+
 type Post = {
   filename: string;
   name: string;
@@ -128,6 +135,7 @@ function App() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
+  const [currentFilename, setCurrentFilename] = useState<string | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const isScrolling = useRef(false);
@@ -144,6 +152,7 @@ function App() {
           const data = await contentResponse.json();
           if (data.content) {
             setMarkdown(data.content);
+            setCurrentFilename(mostRecent.filename);
           }
         }
       } catch (error) {
@@ -183,11 +192,17 @@ function App() {
       const response = await fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename, markdown, html }),
+        body: JSON.stringify({
+          filename,
+          markdown,
+          html,
+          existingFilename: currentFilename
+        }),
       });
 
       const result = await response.json();
       if (result.success) {
+        setCurrentFilename(result.filename);
         setSaveStatus('saved');
         setTimeout(() => setSaveStatus('idle'), 2000);
       } else {
@@ -216,12 +231,18 @@ function App() {
     }
   };
 
+  const handleNewPost = () => {
+    setMarkdown(defaultMarkdown);
+    setCurrentFilename(null);
+  };
+
   const loadPost = async (filename: string) => {
     try {
       const response = await fetch(`/api/load/${encodeURIComponent(filename)}`);
       const data = await response.json();
       if (data.content) {
         setMarkdown(data.content);
+        setCurrentFilename(filename);
         setShowLoadModal(false);
       }
     } catch (error) {
@@ -265,6 +286,15 @@ function App() {
           <h1>WRITER</h1>
         </div>
         <div className="header-actions">
+          <motion.button
+            className="header-button"
+            onClick={handleNewPost}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            aria-label="New post"
+          >
+            <PlusIcon />
+          </motion.button>
           <motion.button
             className="header-button"
             onClick={openLoadModal}
