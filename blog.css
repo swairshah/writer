@@ -8,6 +8,7 @@ body {
     color: #1a1a1a;
     background-color: #fafaf8;
     padding: 2rem;
+    transition: background-color 0.3s, color 0.3s;
 }
 
 .container { max-width: 750px; margin: 0 auto; }
@@ -27,7 +28,7 @@ header .meta {
     color: #999;
 }
 
-article { color: #333; }
+article { color: #333; transition: color 0.3s; }
 article h1 { display: none; }
 article h2 {
     font-family: 'Unica One', cursive;
@@ -55,15 +56,17 @@ blockquote {
     border-left: 4px solid #ddd;
     font-size: 1.1rem;
     letter-spacing: 0.02em;
+    transition: background-color 0.3s, border-color 0.3s, color 0.3s;
 }
 blockquote p { margin-bottom: 0; text-align: left; }
 
 code {
     font-family: 'Google Sans Mono', monospace;
-    font-size: 0.9em;
+    font-size: 1.0em;
     background-color: #f0f0ed;
     padding: 0.2em 0.4em;
     border-radius: 3px;
+    transition: background-color 0.3s, color 0.3s;
 }
 pre {
     background-color: #1a1a1a;
@@ -72,11 +75,12 @@ pre {
     margin: 1.2rem 0;
     overflow-x: auto;
     border-radius: 4px;
+    transition: background-color 0.3s;
 }
 pre code {
     background-color: transparent;
     padding: 0;
-    font-size: 0.85rem;
+    font-size: 0.95rem;
     line-height: 1.5;
     color: #f0f0ed;
 }
@@ -100,29 +104,29 @@ p:has(img) em, img + em {
     font-style: italic;
 }
 
-.back-link {
-    display: inline-block;
+.nav-links {
     margin-top: 3rem;
     font-family: 'Inter', sans-serif;
     font-size: 0.9rem;
+}
+.nav-links a {
     color: #999;
     text-decoration: none;
     transition: color 0.2s;
 }
-.back-link:hover { color: #1a1a1a; }
+.nav-links a:hover { color: #1a1a1a; }
 
 /* Dark Mode */
-@media (prefers-color-scheme: dark) {
-    body { background-color: #1a1a1a; color: #f0f0ed; }
-    article { color: #ccc; }
-    article a { color: #f0f0ed; }
-    header h1 { color: #f0f0ed; }
-    blockquote { background-color: #252525; border-left-color: #444; color: #ccc; }
-    code { background-color: #252525; color: #f0f0ed; }
-    pre { background-color: #0d0d0d; }
-    img { border-color: #333; }
-    .back-link:hover { color: #f0f0ed; }
-}
+html.dark body { background-color: #1a1a1a; color: #f0f0ed; }
+html.dark article { color: #ccc; }
+html.dark article a { color: #f0f0ed; }
+html.dark header h1 { color: #f0f0ed; }
+html.dark blockquote { background-color: #252525; border-left-color: #444; color: #ccc; }
+html.dark code { background-color: transparent; color: #f0f0ed; }
+html.dark pre { background-color: #0d0d0d; }
+html.dark pre code { background-color: transparent; }
+html.dark img { border-color: #333; }
+html.dark .nav-links a:hover { color: #f0f0ed; }
 
 @media (max-width: 768px) {
     body { font-size: 20px; padding: 1rem; line-height: 1.6; }
@@ -130,5 +134,5 @@ p:has(img) em, img + em {
     article h2 { font-size: 1.5rem; letter-spacing: 1px; }
     article h3 { font-size: 1.15rem; }
     blockquote { font-size: 1rem; padding: 1rem; }
-    pre code { font-size: 0.8rem; }
+    pre code { font-size: 0.9rem; }
 }
