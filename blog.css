@@ -1,10 +1,18 @@
 /* Shared Blog Post Styles */
+:root {
+    --GW-serif-font-stack: "Source Serif 4", "Apple Garamond", "Baskerville",
+        "Libre Baskerville", "Droid Serif", "Times New Roman", "Times", serif,
+        "Noto Emoji", "Quivira";
+    --GW-body-text-font-size: 25px;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-    font-family: 'Lora', serif;
-    font-size: 22px;
-    line-height: 1.45;
+    font-family: var(--GW-serif-font-stack);
+    font-size: var(--GW-body-text-font-size);
+    font-weight: 400;
+    line-height: 1.55;
     color: #1a1a1a;
     background-color: #fafaf8;
     padding: 2rem;
@@ -16,15 +24,16 @@ body {
 header { margin-bottom: 3rem; }
 header h1 {
     font-family: 'Unica One', cursive;
-    font-size: 3rem;
+    font-size: 3.25rem;
     font-weight: 400;
     margin-bottom: 0.5rem;
     text-transform: uppercase;
     letter-spacing: 3px;
+    color: #1a1a1a;
 }
 header .meta {
     font-family: 'Inter', sans-serif;
-    font-size: 14px;
+    font-size: 17px;
     color: #999;
 }
 
@@ -32,14 +41,14 @@ article { color: #333; transition: color 0.3s; }
 article h1 { display: none; }
 article h2 {
     font-family: 'Unica One', cursive;
-    font-size: 2.2rem;
+    font-size: 2.75rem;
     margin: 1.5rem 0 0.75rem 0;
     font-weight: 400;
     text-transform: uppercase;
 }
 article h3 {
     font-family: 'Inter', sans-serif;
-    font-size: 1.4rem;
+    font-size: 1.75rem;
     font-weight: 600;
     margin: 1.2rem 0 0.6rem 0;
 }
@@ -54,7 +63,7 @@ blockquote {
     padding: 1.2rem;
     margin: 1.2rem 0;
     border-left: 4px solid #ddd;
-    font-size: 1.1rem;
+    font-size: 1.4rem;
     letter-spacing: 0.02em;
     transition: background-color 0.3s, border-color 0.3s, color 0.3s;
 }
@@ -80,7 +89,7 @@ pre {
 pre code {
     background-color: transparent;
     padding: 0;
-    font-size: 0.95rem;
+    font-size: 1.2rem;
     line-height: 1.5;
     color: #f0f0ed;
 }
@@ -129,10 +138,10 @@ html.dark img { border-color: #333; }
 html.dark .nav-links a:hover { color: #f0f0ed; }
 
 @media (max-width: 768px) {
-    body { font-size: 20px; padding: 1rem; line-height: 1.6; }
-    header h1 { font-size: 1.75rem; letter-spacing: 1px; }
-    article h2 { font-size: 1.5rem; letter-spacing: 1px; }
-    article h3 { font-size: 1.15rem; }
-    blockquote { font-size: 1rem; padding: 1rem; }
-    pre code { font-size: 0.9rem; }
+    body { font-size: 22px; padding: 1rem; line-height: 1.55; }
+    header h1 { font-size: 2.2rem; letter-spacing: 1px; }
+    article h2 { font-size: 1.9rem; letter-spacing: 1px; }
+    article h3 { font-size: 1.45rem; }
+    blockquote { font-size: 1.25rem; padding: 1rem; }
+    pre code { font-size: 1.1rem; }
 }

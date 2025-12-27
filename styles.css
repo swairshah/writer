@@ -233,15 +233,15 @@ body {
 .article-content {
   max-width: 750px;
   margin: 0 auto;
-  font-family: 'Lora', serif;
-  font-size: 18px;
-  line-height: 1.6;
+  font-family: "Source Serif 4", "Apple Garamond", "Baskerville", "Libre Baskerville", "Droid Serif", "Times New Roman", "Times", serif;
+  font-size: 25px;
+  line-height: 1.55;
   color: var(--text-secondary);
 }
 
 .article-content h1 {
   font-family: 'Unica One', cursive;
-  font-size: 2.5rem;
+  font-size: 3.25rem;
   font-weight: 400;
   margin-bottom: 0.5rem;
   text-transform: uppercase;
@@ -251,19 +251,18 @@ body {
 
 .article-content h2 {
   font-family: 'Unica One', cursive;
-  font-size: 1.8rem;
-  margin: 2rem 0 1rem 0;
+  font-size: 2.75rem;
+  margin: 1.5rem 0 0.75rem 0;
   font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 2px;
   color: var(--text-primary);
 }
 
 .article-content h3 {
   font-family: 'Inter', sans-serif;
-  font-size: 1.2rem;
+  font-size: 1.75rem;
   font-weight: 600;
-  margin: 1.5rem 0 0.75rem 0;
+  margin: 1.2rem 0 0.6rem 0;
   color: var(--text-primary);
 }
 
@@ -304,8 +303,8 @@ body {
   padding: 1.2rem;
   margin: 1.2rem 0;
   border-left: 4px solid var(--border-light);
-  font-family: 'Lora', serif;
-  font-size: 1.1rem;
+  font-family: "Source Serif 4", serif;
+  font-size: 1.4rem;
   letter-spacing: 0.02em;
   color: var(--text-secondary);
 }
@@ -337,8 +336,8 @@ body {
 .article-content pre code {
   background-color: transparent;
   padding: 0;
-  font-size: 0.85rem;
-  line-height: 1.6;
+  font-size: 1.2rem;
+  line-height: 1.5;
   color: var(--code-text);
 }
 

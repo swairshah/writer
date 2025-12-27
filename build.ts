@@ -105,7 +105,7 @@ const indexHtml = `<!DOCTYPE html>
     <title>Swair Shah / BLOG</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=Google+Sans+Mono&family=Inter:wght@400;500;600&family=Unica+One&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&family=Lora:wght@400;500;600;700&family=Google+Sans+Mono&family=Inter:wght@400;500;600&family=Unica+One&display=swap" rel="stylesheet">
     ${themeToggleScript}
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -257,7 +257,7 @@ const aboutHtml = `<!DOCTYPE html>
     <title>Swair Shah / ABOUT</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=Google+Sans+Mono&family=Inter:wght@400;500;600&family=Unica+One&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&family=Lora:wght@400;500;600;700&family=Google+Sans+Mono&family=Inter:wght@400;500;600&family=Unica+One&display=swap" rel="stylesheet">
     ${themeToggleScript}
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -345,7 +345,7 @@ for (const post of posts) {
     <title>Swair Shah / ${post.title}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=Google+Sans+Mono&family=Inter:wght@400;500;600&family=Unica+One&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&family=Lora:wght@400;500;600;700&family=Google+Sans+Mono&family=Inter:wght@400;500;600&family=Unica+One&display=swap" rel="stylesheet">
     ${themeToggleScript}
     <style>${blogCss}${themeToggleStyles}.nav-top { max-width: 750px; margin: 0 auto 1rem auto; }</style>
 </head>
