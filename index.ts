@@ -1,16 +1,32 @@
 import index from "./index.html";
 import { mkdir, readdir } from "node:fs/promises";
 import { marked } from "marked";
-import Anthropic from "@anthropic-ai/sdk";
+import { Type } from "@sinclair/typebox";
+import {
+  AuthStorage,
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRegistry,
+  SessionManager,
+  SettingsManager,
+  type ToolDefinition,
+  type AgentSession,
+} from "@mariozechner/pi-coding-agent";
 
 const MARKDOWN_DIR = "./markdown";
 const HTML_DIR = "./posts";
 const CONVERSATIONS_DIR = "./conversations";
 
-// ── Anthropic setup ────────────────────────────────────────
+// ── Pi Agent setup ────────────────────────────────────────
 
-const anthro = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = "claude-sonnet-4-6";
+const authStorage = AuthStorage.create();
+
+// If ANTHROPIC_API_KEY is in .env, set it as a runtime key
+if (process.env.ANTHROPIC_API_KEY) {
+  authStorage.setRuntimeApiKey("anthropic", process.env.ANTHROPIC_API_KEY);
+}
+
+const modelRegistry = new ModelRegistry(authStorage);
 
 type HighlightData = {
   id: string;
@@ -27,38 +43,40 @@ type AssistantMessage = {
   timestamp: string;
 };
 
-const HIGHLIGHT_TOOL: Anthropic.Messages.Tool = {
+// Custom tool for inline highlights
+const highlightTool: ToolDefinition = {
   name: "add_highlight",
+  label: "Add Highlight",
   description:
     "Highlight a passage in the writer's text to ask a question, make a suggestion, or propose an edit. " +
     "The matchText MUST be an exact verbatim substring from the document. Use sparingly (1-4 per response).",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      type: {
-        type: "string",
-        enum: ["question", "suggestion", "edit", "voice", "weakness", "evidence", "wordiness", "factcheck"],
-        description:
-          'question = unclear intent, suggestion = structural improvement, edit = specific text replacement, voice = different from writer\'s voice, weakness = weakest argument, evidence = needs examples/data, wordiness = could be shorter (provide suggestedEdit), factcheck = may need citation',
-      },
-      matchText: {
-        type: "string",
-        description: "EXACT verbatim substring from the document to highlight. Must match character-for-character.",
-      },
-      comment: {
-        type: "string",
-        description: "The question, suggestion, or explanation shown to the writer.",
-      },
-      suggestedEdit: {
-        type: "string",
-        description: "Replacement text. Only provide for type=edit or type=wordiness.",
-      },
-    },
-    required: ["type", "matchText", "comment"],
+  parameters: Type.Object({
+    type: Type.Union([
+      Type.Literal("question"),
+      Type.Literal("suggestion"),
+      Type.Literal("edit"),
+      Type.Literal("voice"),
+      Type.Literal("weakness"),
+      Type.Literal("evidence"),
+      Type.Literal("wordiness"),
+      Type.Literal("factcheck"),
+    ], {
+      description: "question = unclear intent, suggestion = structural improvement, edit = specific text replacement, voice = different from writer's voice, weakness = weakest argument, evidence = needs examples/data, wordiness = could be shorter, factcheck = may need citation",
+    }),
+    matchText: Type.String({ description: "EXACT verbatim substring from the document to highlight. Must match character-for-character." }),
+    comment: Type.String({ description: "The question, suggestion, or explanation shown to the writer." }),
+    suggestedEdit: Type.Optional(Type.String({ description: "Replacement text. Only provide for type=edit or type=wordiness." })),
+  }),
+  execute: async (toolCallId, params) => {
+    // The tool result is consumed by the agent; actual highlight data is extracted from events
+    return {
+      content: [{ type: "text", text: "Highlight added successfully." }],
+      details: { highlight: params },
+    };
   },
 };
 
-const SYSTEM_PROMPT = `You are a thoughtful writing assistant for a blog writer. You're the kind of reader every writer wishes they had — someone who pays close attention, asks the questions that unlock better thinking, and isn't afraid to point out where the writing falls short. You respond with both chat messages and inline highlights on their text.
+const WRITING_SYSTEM_PROMPT = `You are a thoughtful writing assistant for a blog writer. You're the kind of reader every writer wishes they had — someone who pays close attention, asks the questions that unlock better thinking, and isn't afraid to point out where the writing falls short. You respond with both chat messages and inline highlights on their text.
 
 Your role:
 - Ask probing questions that help the writer think deeper
@@ -68,6 +86,7 @@ Your role:
 - When it's natural, end your response with a question that invites the writer to keep thinking
 - Use highlights sparingly: 1-4 per response, only when genuinely useful
 - You can respond with chat-only messages when appropriate
+- You can use tools like web search and file reading when the writer asks you to research something, look something up, or fact-check a claim
 
 Highlight types:
 - "question" (blue): Something is unclear, or you want the writer to reflect
@@ -119,6 +138,31 @@ async function saveConversation(slug: string, messages: AssistantMessage[]): Pro
     `${CONVERSATIONS_DIR}/${slug}.chat.json`,
     JSON.stringify({ messages, updatedAt: new Date().toISOString() }, null, 2)
   );
+}
+
+// Create a pi agent session for a chat request
+async function createWriterSession(documentContent: string): Promise<AgentSession> {
+  let systemPrompt = WRITING_SYSTEM_PROMPT;
+  const strippedContent = stripMarkdown((documentContent || "").trim());
+  if (strippedContent) {
+    systemPrompt += `\n\n---\n\n## Current Document\n\n${strippedContent}`;
+  }
+
+  const loader = new DefaultResourceLoader({
+    systemPromptOverride: () => systemPrompt,
+  });
+  await loader.reload();
+
+  const { session } = await createAgentSession({
+    sessionManager: SessionManager.inMemory(),
+    settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
+    authStorage,
+    modelRegistry,
+    customTools: [highlightTool],
+    resourceLoader: loader,
+  });
+
+  return session;
 }
 const blogCss = await Bun.file("./blog.css").text();
 
@@ -174,6 +218,61 @@ const themeToggleStyles = `
 html.dark .theme-toggle { color: #f0f0ed; }
 `;
 
+// ── Supabase setup ────────────────────────────────────────
+
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
+
+// Server-side Supabase client (for auth verification)
+import { createClient } from "@supabase/supabase-js";
+const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  : null;
+
+// JWT verification using jose (same approach as Hermes)
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+function getJwks() {
+  if (!jwks && SUPABASE_URL) {
+    jwks = createRemoteJWKSet(new URL(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`));
+  }
+  return jwks;
+}
+
+async function getUserFromToken(token: string): Promise<{ id: string; email?: string } | null> {
+  try {
+    const jwksClient = getJwks();
+    if (!jwksClient) return null;
+    const { payload } = await jwtVerify(token, jwksClient, { audience: "authenticated" });
+    if (!payload.sub) return null;
+    return { id: payload.sub, email: payload.email as string | undefined };
+  } catch {
+    return null;
+  }
+}
+
+async function requireAuth(req: Request): Promise<{ id: string; email?: string } | Response> {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return new Response(JSON.stringify({ error: "Missing authorization token" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const user = await getUserFromToken(authHeader.slice(7));
+  if (!user) {
+    return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return user;
+}
+
+// Config endpoint — frontend fetches this to get Supabase config
+
 await mkdir(MARKDOWN_DIR, { recursive: true });
 await mkdir(HTML_DIR, { recursive: true });
 
@@ -182,6 +281,10 @@ Bun.serve({
   hostname: "0.0.0.0",
   routes: {
     "/": index,
+    "/api/config": () => new Response(JSON.stringify({
+      supabaseUrl: SUPABASE_URL,
+      supabaseAnonKey: SUPABASE_ANON_KEY,
+    }), { headers: { "Content-Type": "application/json" } }),
     "/about": {
       GET: async () => {
         const html = `<!DOCTYPE html>
@@ -698,6 +801,12 @@ Bun.serve({
     "/api/assistant/chat": {
       POST: async (req) => {
         try {
+          // Auth gate: require auth when Supabase is configured
+          if (SUPABASE_URL) {
+            const authResult = await requireAuth(req);
+            if (authResult instanceof Response) return authResult;
+          }
+
           const { filename, message, markdown } = await req.json();
           if (!filename || !message) {
             return new Response(JSON.stringify({ error: "filename and message required" }), {
@@ -709,13 +818,6 @@ Bun.serve({
           const slug = filename.replace(".md", "");
           const existingMessages = (await loadConversation(slug)).slice(-30);
 
-          // Build system context with the document
-          let systemContent = SYSTEM_PROMPT;
-          const strippedContent = stripMarkdown((markdown || "").trim());
-          if (strippedContent) {
-            systemContent += `\n\n---\n\n## Current Document\n\n${strippedContent}`;
-          }
-
           const userMessage: AssistantMessage = {
             role: "user",
             content: message,
@@ -725,6 +827,28 @@ Bun.serve({
 
           // Save user message immediately
           await saveConversation(slug, allMessages);
+
+          // Create pi agent session with document context
+          const session = await createWriterSession(markdown || "");
+
+          // Inject conversation history into the agent
+          for (const msg of existingMessages) {
+            if (msg.role === "user") {
+              session.agent.appendMessage({
+                role: "user",
+                content: [{ type: "text", text: msg.content }],
+                timestamp: Date.now(),
+              });
+            } else {
+              session.agent.appendMessage({
+                role: "assistant",
+                content: [{ type: "text", text: msg.content }],
+                timestamp: Date.now(),
+                api: "anthropic",
+                provider: "anthropic",
+              });
+            }
+          }
 
           // SSE response
           const encoder = new TextEncoder();
@@ -736,106 +860,43 @@ Bun.serve({
                 } catch {}
               }
 
+              let fullTextResponse = "";
+              const highlights: HighlightData[] = [];
+              let highlightCounter = 0;
+
               try {
-                const anthropicMessages = allMessages.map((m) => ({
-                  role: m.role as "user" | "assistant",
-                  content: m.content,
-                }));
-
-                let fullTextResponse = "";
-                const highlights: HighlightData[] = [];
-                let highlightCounter = 0;
-
-                const tools: Anthropic.Messages.Tool[] = [HIGHLIGHT_TOOL];
-                const MAX_TOOL_ROUNDS = 5;
-                let messages: Anthropic.Messages.MessageParam[] = anthropicMessages;
-                let continueLoop = true;
-                let toolRound = 0;
-
-                while (continueLoop) {
-                  const response = await anthro.messages.create({
-                    model: MODEL,
-                    max_tokens: 2048,
-                    temperature: 0.7,
-                    system: systemContent,
-                    tools,
-                    messages,
-                    stream: true,
-                  });
-
-                  let currentToolName = "";
-                  let currentToolInput = "";
-                  let currentToolId = "";
-                  const contentBlocks: Anthropic.Messages.ContentBlock[] = [];
-                  let stopReason: string | null = null;
-
-                  for await (const event of response) {
-                    if (event.type === "content_block_start") {
-                      if (event.content_block.type === "tool_use") {
-                        currentToolName = event.content_block.name;
-                        currentToolId = event.content_block.id;
-                        currentToolInput = "";
+                // Subscribe to streaming events
+                const unsubscribe = session.subscribe((event) => {
+                  if (event.type === "message_update") {
+                    if (event.assistantMessageEvent.type === "text_delta") {
+                      const delta = event.assistantMessageEvent.delta;
+                      fullTextResponse += delta;
+                      write(`event: text\ndata: ${JSON.stringify({ chunk: delta })}\n\n`);
+                    }
+                  } else if (event.type === "tool_execution_end") {
+                    // Extract highlights from tool results
+                    if (event.toolName === "add_highlight" && !event.isError) {
+                      const result = event.result as any;
+                      const hlData = result?.details?.highlight;
+                      if (hlData) {
+                        const highlight: HighlightData = {
+                          id: `h${++highlightCounter}-${Date.now()}`,
+                          type: hlData.type,
+                          matchText: hlData.matchText,
+                          comment: hlData.comment,
+                          suggestedEdit: hlData.suggestedEdit || undefined,
+                        };
+                        highlights.push(highlight);
+                        write(`event: highlight\ndata: ${JSON.stringify(highlight)}\n\n`);
                       }
-                    } else if (event.type === "content_block_delta") {
-                      if (event.delta.type === "text_delta") {
-                        fullTextResponse += event.delta.text;
-                        write(`event: text\ndata: ${JSON.stringify({ chunk: event.delta.text })}\n\n`);
-                      } else if (event.delta.type === "input_json_delta") {
-                        currentToolInput += event.delta.partial_json;
-                      }
-                    } else if (event.type === "content_block_stop") {
-                      if (currentToolName && currentToolInput) {
-                        if (currentToolName === "add_highlight") {
-                          try {
-                            const input = JSON.parse(currentToolInput);
-                            const highlight: HighlightData = {
-                              id: `h${++highlightCounter}-${Date.now()}`,
-                              type: input.type,
-                              matchText: input.matchText,
-                              comment: input.comment,
-                              suggestedEdit: input.suggestedEdit || undefined,
-                            };
-                            highlights.push(highlight);
-                            write(`event: highlight\ndata: ${JSON.stringify(highlight)}\n\n`);
-                          } catch {}
-                        }
-                        contentBlocks.push({
-                          type: "tool_use",
-                          id: currentToolId,
-                          name: currentToolName,
-                          input: JSON.parse(currentToolInput || "{}"),
-                        } as Anthropic.Messages.ToolUseBlock);
-                        currentToolName = "";
-                        currentToolInput = "";
-                      }
-                    } else if (event.type === "message_delta") {
-                      stopReason = event.delta.stop_reason;
                     }
                   }
+                });
 
-                  if (stopReason === "tool_use") {
-                    toolRound++;
-                    if (toolRound >= MAX_TOOL_ROUNDS) {
-                      continueLoop = false;
-                      break;
-                    }
-                    const toolBlocks = contentBlocks.filter(
-                      (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use"
-                    );
-                    const toolResults: Anthropic.Messages.ToolResultBlockParam[] = toolBlocks.map((block) => ({
-                      type: "tool_result" as const,
-                      tool_use_id: block.id,
-                      content: "Highlight added successfully.",
-                    }));
-                    messages = [
-                      ...messages,
-                      { role: "assistant", content: contentBlocks },
-                      { role: "user", content: toolResults },
-                    ];
-                  } else {
-                    continueLoop = false;
-                  }
-                }
+                // Send the prompt and wait for completion
+                await session.prompt(message);
+
+                unsubscribe();
 
                 // Save complete conversation
                 const assistantMessage: AssistantMessage = {
@@ -849,8 +910,9 @@ Bun.serve({
                 write(`event: done\ndata: ${JSON.stringify({ ok: true })}\n\n`);
               } catch (error: any) {
                 console.error("Assistant stream error:", error?.message);
-                write(`event: error\ndata: ${JSON.stringify({ error: "Stream failed" })}\n\n`);
+                write(`event: error\ndata: ${JSON.stringify({ error: error?.message || "Stream failed" })}\n\n`);
               } finally {
+                session.dispose();
                 controller.close();
               }
             },
