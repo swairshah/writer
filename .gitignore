@@ -43,6 +43,9 @@ ENV/
 .env.*
 !.env.example
 
+# Conversations (AI assistant chat history)
+conversations/
+
 # Node.js (for webapp and potential root usage)
 node_modules/
 npm-debug.log*
@@ -58,3 +61,6 @@ misc/
 
 # BAML
 baml_client/
+
+# Tauri
+src-tauri/target/
