@@ -878,7 +878,9 @@ function App() {
                 const freshPages = { writing: data.content, scratchpad: data.scratchpad || "" };
                 setPages(freshPages);
                 pagesRef.current = freshPages;
+                switchingRef.current = true;
                 editor.commands.setContent(data.content, { contentType: "markdown" });
+                setTimeout(() => { switchingRef.current = false; }, 50);
                 setWordCount(getWordCount(editor.getText()));
                 setCurrentFilename(most.filename || most.id);
                 setCurrentPostId(most.id || null);
@@ -1032,7 +1034,9 @@ function App() {
         pagesRef.current = freshPages;
         setActiveTab("writing");
         activeTabRef.current = "writing";
+        switchingRef.current = true;
         editor.commands.setContent(data.content, { contentType: "markdown" });
+        setTimeout(() => { switchingRef.current = false; }, 50);
         setWordCount(getWordCount(editor.getText()));
         setCurrentFilename(loadId);
         setCurrentPostId(id || null);
