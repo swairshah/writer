@@ -243,8 +243,13 @@ function HighlightPopover({
   }, [onDismiss]);
 
   if (!highlight || !rect) return null;
-  const top = rect.bottom + 8;
-  const left = rect.left + rect.width / 2;
+
+  // Convert viewport-relative rect to scroll-area-relative position
+  const scrollArea = document.querySelector(".scroll-area");
+  const scrollTop = scrollArea ? scrollArea.scrollTop : 0;
+  const scrollRect = scrollArea ? scrollArea.getBoundingClientRect() : { top: 0, left: 0 };
+  const top = rect.bottom - scrollRect.top + scrollTop + 8;
+  const left = rect.left - scrollRect.left + rect.width / 2;
 
   return (
     <div ref={popoverRef} className="popover" style={{ top, left }}>
@@ -280,17 +285,21 @@ function HighlightPopover({
 function ChatPanel({
   getMarkdown,
   currentFilename,
+  postId,
   onHighlights,
   expanded,
   onToggle,
   session,
+  authFetch,
 }: {
   getMarkdown: () => string;
   currentFilename: string | null;
+  postId: string | null;
   onHighlights: (highlights: Highlight[]) => void;
   expanded: boolean;
   onToggle: (open: boolean) => void;
   session: Session | null;
+  authFetch: (url: string, options?: RequestInit) => Promise<Response>;
 }) {
   const handleSetExpanded = useCallback((open: boolean) => {
     onToggle(open);
@@ -308,18 +317,29 @@ function ChatPanel({
   useEffect(() => {
     abortRef.current?.abort();
     abortRef.current = null;
-    if (!currentFilename) {
+    const chatKey = postId || currentFilename;
+    if (!chatKey) {
       setMessages([]);
       setLoaded(true);
       return;
     }
     setLoaded(false);
-    const slug = currentFilename.replace(".md", "");
-    fetch(`/api/assistant/conversation/${encodeURIComponent(slug)}`)
+    authFetch(`/api/assistant/conversation/${encodeURIComponent(chatKey)}`)
       .then((r) => r.json())
       .then((data) => {
-        setMessages(data.messages || []);
+        const msgs = data.messages || [];
+        setMessages(msgs);
         setLoaded(true);
+        // Restore highlights from conversation
+        const allHighlights: Highlight[] = [];
+        for (const msg of msgs) {
+          if (msg.highlights) {
+            allHighlights.push(...msg.highlights);
+          }
+        }
+        if (allHighlights.length > 0 && onHighlights) {
+          onHighlights(allHighlights);
+        }
       })
       .catch(() => {
         setMessages([]);
@@ -350,16 +370,11 @@ function ChatPanel({
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (session?.access_token) {
-        headers["Authorization"] = `Bearer ${session.access_token}`;
-      }
-
-      const response = await fetch("/api/assistant/chat", {
+      const response = await authFetch("/api/assistant/chat", {
         method: "POST",
-        headers,
         body: JSON.stringify({
           filename: currentFilename,
+          postId,
           message: text,
           markdown: getMarkdown(),
         }),
@@ -681,6 +696,19 @@ function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authConfigured, setAuthConfigured] = useState(false);
+  const [currentPostId, setCurrentPostId] = useState<string | null>(null);
+
+  // Authenticated fetch helper
+  const authFetch = useCallback((url: string, options?: RequestInit) => {
+    const headers = new Headers(options?.headers);
+    if (session?.access_token) {
+      headers.set("Authorization", `Bearer ${session.access_token}`);
+    }
+    if (!headers.has("Content-Type") && options?.method === "POST") {
+      headers.set("Content-Type", "application/json");
+    }
+    return fetch(url, { ...options, headers });
+  }, [session]);
 
   useEffect(() => {
     let sub: { unsubscribe: () => void } | null = null;
@@ -837,12 +865,13 @@ function App() {
 
   // Load most recent post on startup
   useEffect(() => {
-    fetch("/api/posts")
+    if (authLoading) return;
+    authFetch("/api/posts")
       .then((r) => r.json())
       .then((posts) => {
         if (posts.length > 0) {
           const most = posts[0];
-          fetch(`/api/load/${encodeURIComponent(most.filename)}`)
+          authFetch(`/api/load/${encodeURIComponent(most.filename || most.id)}`)
             .then((r) => r.json())
             .then((data) => {
               if (data.content && editor) {
@@ -851,13 +880,14 @@ function App() {
                 pagesRef.current = freshPages;
                 editor.commands.setContent(data.content, { contentType: "markdown" });
                 setWordCount(getWordCount(editor.getText()));
-                setCurrentFilename(most.filename);
+                setCurrentFilename(most.filename || most.id);
+                setCurrentPostId(most.id || null);
               }
             });
         }
       })
       .catch(() => {});
-  }, [editor]);
+  }, [editor, authLoading, authFetch]);
 
   // Tab switching
   const handleTabChange = useCallback((key: string) => {
@@ -916,14 +946,22 @@ function App() {
 
     setSaveStatus("saving");
     try {
-      const response = await fetch("/api/save", {
+      const response = await authFetch("/api/save", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename, markdown, html, scratchpad, existingFilename: currentFilename }),
+        body: JSON.stringify({
+          filename,
+          markdown,
+          html,
+          scratchpad,
+          highlights: highlightsRef.current,
+          existingFilename: currentFilename,
+          postId: currentPostId,
+        }),
       });
       const result = await response.json();
       if (result.success) {
-        setCurrentFilename(result.filename);
+        setCurrentFilename(result.filename || result.postId);
+        if (result.postId) setCurrentPostId(result.postId);
         setSaveStatus("saved");
         setTimeout(() => setSaveStatus("idle"), 2000);
       } else {
@@ -976,16 +1014,17 @@ function App() {
 
   const openLoadModal = async () => {
     try {
-      const response = await fetch("/api/posts");
+      const response = await authFetch("/api/posts");
       const data = await response.json();
       setPosts(data);
       setShowLoadModal(true);
     } catch {}
   };
 
-  const loadPost = async (filename: string) => {
+  const loadPost = async (filename: string, id?: string) => {
     try {
-      const response = await fetch(`/api/load/${encodeURIComponent(filename)}`);
+      const loadId = id || filename;
+      const response = await authFetch(`/api/load/${encodeURIComponent(loadId)}`);
       const data = await response.json();
       if (data.content && editor) {
         const freshPages = { writing: data.content, scratchpad: data.scratchpad || "" };
@@ -995,10 +1034,17 @@ function App() {
         activeTabRef.current = "writing";
         editor.commands.setContent(data.content, { contentType: "markdown" });
         setWordCount(getWordCount(editor.getText()));
-        setCurrentFilename(filename);
+        setCurrentFilename(loadId);
+        setCurrentPostId(id || null);
         setShowLoadModal(false);
-        highlightsRef.current = [];
-        setHighlights([]);
+        // Restore highlights from saved post
+        if (data.highlights && data.highlights.length > 0) {
+          highlightsRef.current = data.highlights;
+          setHighlights(data.highlights);
+        } else {
+          highlightsRef.current = [];
+          setHighlights([]);
+        }
       }
     } catch {}
   };
@@ -1013,6 +1059,7 @@ function App() {
     editor.commands.setContent("", { contentType: "markdown" });
     setWordCount(0);
     setCurrentFilename(null);
+    setCurrentPostId(null);
     highlightsRef.current = [];
     setHighlights([]);
   };
@@ -1188,25 +1235,27 @@ function App() {
             <EditorContent editor={editor} />
           </div>
         </div>
-      </div>
 
-      {/* Highlight popover */}
-      <HighlightPopover
-        highlight={activeHighlight}
-        rect={popoverRect}
-        onDismiss={handleDismissHighlight}
-        onAcceptEdit={handleAcceptEdit}
-        onReply={handleReply}
-      />
+        {/* Highlight popover — inside scroll-area so it scrolls with content */}
+        <HighlightPopover
+          highlight={activeHighlight}
+          rect={popoverRect}
+          onDismiss={handleDismissHighlight}
+          onAcceptEdit={handleAcceptEdit}
+          onReply={handleReply}
+        />
+      </div>
 
       {/* Chat panel */}
       <ChatPanel
         getMarkdown={getMarkdown}
         currentFilename={currentFilename}
+        postId={currentPostId}
         onHighlights={addHighlights}
         expanded={chatOpen}
         onToggle={setChatOpen}
         session={session}
+        authFetch={authFetch}
       />
 
       {/* Load modal */}
@@ -1223,7 +1272,7 @@ function App() {
               ) : (
                 <ul className="post-list">
                   {posts.map((post) => (
-                    <li key={post.filename} className="post-item" onClick={() => loadPost(post.filename)}>
+                    <li key={post.id || post.filename} className="post-item" onClick={() => loadPost(post.filename, post.id)}>
                       <span className="post-name">{post.name}</span>
                       <span className="post-date">{post.date}</span>
                     </li>

@@ -682,31 +682,44 @@ Bun.serve({
       },
     },
     "/api/posts": {
-      GET: async () => {
+      GET: async (req) => {
         try {
+          const authResult = SUPABASE_URL ? await requireAuth(req) : null;
+          if (authResult instanceof Response) return authResult;
+          const userId = authResult?.id;
+
+          if (supabaseAdmin && userId) {
+            const { data, error } = await supabaseAdmin
+              .from("posts")
+              .select("id, title, filename, content, created_at, updated_at")
+              .eq("user_id", userId)
+              .order("updated_at", { ascending: false });
+            if (error) throw error;
+            const posts = (data || []).map((p: any) => ({
+              id: p.id,
+              filename: p.id, // use post ID as identifier
+              name: p.title,
+              date: p.updated_at?.split("T")[0] || "",
+            }));
+            return new Response(JSON.stringify(posts), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          // Fallback: file-based for local dev
           const files = await readdir(MARKDOWN_DIR);
           const posts = await Promise.all(
-            files
-              .filter(f => f.endsWith('.md'))
-              .map(async (f) => {
-                const content = await Bun.file(`${MARKDOWN_DIR}/${f}`).text();
-                const title = content.match(/^#\s+(.+)$/m)?.[1] || f.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace('.md', '').replace(/-/g, ' ');
-                return {
-                  filename: f,
-                  name: title,
-                  date: f.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || '',
-                };
-              })
+            files.filter(f => f.endsWith('.md') && !f.includes('.scratchpad.')).map(async (f) => {
+              const content = await Bun.file(`${MARKDOWN_DIR}/${f}`).text();
+              const title = content.match(/^#\s+(.+)$/m)?.[1] || f.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace('.md', '').replace(/-/g, ' ');
+              return { filename: f, name: title, date: f.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || '' };
+            })
           );
           posts.sort((a, b) => b.date.localeCompare(a.date));
-
-          return new Response(JSON.stringify(posts), {
-            headers: { "Content-Type": "application/json" },
-          });
+          return new Response(JSON.stringify(posts), { headers: { "Content-Type": "application/json" } });
         } catch (error) {
           return new Response(JSON.stringify({ error: String(error) }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
+            status: 500, headers: { "Content-Type": "application/json" },
           });
         }
       },
@@ -714,23 +727,45 @@ Bun.serve({
     "/api/load/:filename": {
       GET: async (req) => {
         try {
-          const filename = req.params.filename;
+          const authResult = SUPABASE_URL ? await requireAuth(req) : null;
+          if (authResult instanceof Response) return authResult;
+          const userId = authResult?.id;
+          const fileOrId = req.params.filename;
+
+          if (supabaseAdmin && userId) {
+            const { data, error } = await supabaseAdmin
+              .from("posts")
+              .select("id, content, scratchpad, highlights")
+              .eq("id", fileOrId)
+              .eq("user_id", userId)
+              .single();
+            if (error || !data) {
+              return new Response(JSON.stringify({ error: "Post not found" }), {
+                status: 404, headers: { "Content-Type": "application/json" },
+              });
+            }
+            return new Response(JSON.stringify({
+              content: data.content,
+              scratchpad: data.scratchpad || "",
+              highlights: data.highlights || [],
+            }), { headers: { "Content-Type": "application/json" } });
+          }
+
+          // Fallback: file-based
+          const filename = fileOrId;
           const content = await Bun.file(`${MARKDOWN_DIR}/${filename}`).text();
           const baseName = filename.replace(".md", "");
           let scratchpad = "";
           try {
             const spFile = Bun.file(`${MARKDOWN_DIR}/${baseName}.scratchpad.md`);
-            if (await spFile.exists()) {
-              scratchpad = await spFile.text();
-            }
+            if (await spFile.exists()) scratchpad = await spFile.text();
           } catch {}
           return new Response(JSON.stringify({ content, scratchpad }), {
             headers: { "Content-Type": "application/json" },
           });
         } catch (error) {
           return new Response(JSON.stringify({ error: String(error) }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
+            status: 500, headers: { "Content-Type": "application/json" },
           });
         }
       },
@@ -738,47 +773,74 @@ Bun.serve({
     "/api/save": {
       POST: async (req) => {
         try {
-          const { filename, markdown, html, scratchpad, existingFilename } = await req.json();
+          const authResult = SUPABASE_URL ? await requireAuth(req) : null;
+          if (authResult instanceof Response) return authResult;
+          const userId = authResult?.id;
 
-          if (!filename) {
-            return new Response(JSON.stringify({ error: "Filename required" }), {
-              status: 400,
-              headers: { "Content-Type": "application/json" },
-            });
+          const { filename, markdown, html, scratchpad, highlights, existingFilename, postId } = await req.json();
+
+          if (supabaseAdmin && userId) {
+            const title = (markdown || "").match(/^#\s+(.+)$/m)?.[1] || "Untitled";
+
+            if (postId) {
+              // Update existing post
+              const { error } = await supabaseAdmin
+                .from("posts")
+                .update({
+                  title,
+                  content: markdown || "",
+                  scratchpad: scratchpad || "",
+                  highlights: highlights || [],
+                })
+                .eq("id", postId)
+                .eq("user_id", userId);
+              if (error) throw error;
+              return new Response(JSON.stringify({ success: true, postId }), {
+                headers: { "Content-Type": "application/json" },
+              });
+            } else {
+              // Create new post
+              const { data, error } = await supabaseAdmin
+                .from("posts")
+                .insert({
+                  user_id: userId,
+                  title,
+                  content: markdown || "",
+                  scratchpad: scratchpad || "",
+                  highlights: highlights || [],
+                })
+                .select("id")
+                .single();
+              if (error) throw error;
+              return new Response(JSON.stringify({ success: true, postId: data.id, filename: data.id }), {
+                headers: { "Content-Type": "application/json" },
+              });
+            }
           }
 
+          // Fallback: file-based
+          if (!filename) {
+            return new Response(JSON.stringify({ error: "Filename required" }), {
+              status: 400, headers: { "Content-Type": "application/json" },
+            });
+          }
           let baseName: string;
-
           if (existingFilename) {
-            // Editing existing post - use the existing filename (without .md extension)
             baseName = existingFilename.replace('.md', '');
           } else {
-            // Creating new post - generate new filename with today's date
             const safeName = filename.replace(/[^a-zA-Z0-9-_]/g, "-");
             const timestamp = new Date().toISOString().split("T")[0];
             baseName = `${timestamp}-${safeName}`;
           }
-
           await Bun.write(`${MARKDOWN_DIR}/${baseName}.md`, markdown);
           await Bun.write(`${HTML_DIR}/${baseName}.html`, html);
-          if (scratchpad) {
-            await Bun.write(`${MARKDOWN_DIR}/${baseName}.scratchpad.md`, scratchpad);
-          }
-
+          if (scratchpad) await Bun.write(`${MARKDOWN_DIR}/${baseName}.scratchpad.md`, scratchpad);
           return new Response(JSON.stringify({
-            success: true,
-            filename: `${baseName}.md`,
-            files: {
-              markdown: `${MARKDOWN_DIR}/${baseName}.md`,
-              html: `${HTML_DIR}/${baseName}.html`,
-            }
-          }), {
-            headers: { "Content-Type": "application/json" },
-          });
+            success: true, filename: `${baseName}.md`,
+          }), { headers: { "Content-Type": "application/json" } });
         } catch (error) {
           return new Response(JSON.stringify({ error: String(error) }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
+            status: 500, headers: { "Content-Type": "application/json" },
           });
         }
       },
@@ -786,8 +848,25 @@ Bun.serve({
     "/api/assistant/conversation/:slug": {
       GET: async (req) => {
         try {
-          const slug = req.params.slug;
-          const messages = await loadConversation(slug);
+          const authResult = SUPABASE_URL ? await requireAuth(req) : null;
+          if (authResult instanceof Response) return authResult;
+          const userId = authResult?.id;
+          const postId = req.params.slug;
+
+          if (supabaseAdmin && userId) {
+            const { data } = await supabaseAdmin
+              .from("conversations")
+              .select("messages")
+              .eq("post_id", postId)
+              .eq("user_id", userId)
+              .single();
+            return new Response(JSON.stringify({ messages: data?.messages || [] }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          // Fallback: file-based
+          const messages = await loadConversation(postId);
           return new Response(JSON.stringify({ messages }), {
             headers: { "Content-Type": "application/json" },
           });
@@ -801,22 +880,37 @@ Bun.serve({
     "/api/assistant/chat": {
       POST: async (req) => {
         try {
-          // Auth gate: require auth when Supabase is configured
+          // Auth gate
+          let userId: string | undefined;
           if (SUPABASE_URL) {
             const authResult = await requireAuth(req);
             if (authResult instanceof Response) return authResult;
+            userId = authResult.id;
           }
 
-          const { filename, message, markdown } = await req.json();
-          if (!filename || !message) {
-            return new Response(JSON.stringify({ error: "filename and message required" }), {
+          const { filename, message, markdown, postId } = await req.json();
+          if ((!filename && !postId) || !message) {
+            return new Response(JSON.stringify({ error: "filename/postId and message required" }), {
               status: 400,
               headers: { "Content-Type": "application/json" },
             });
           }
 
-          const slug = filename.replace(".md", "");
-          const existingMessages = (await loadConversation(slug)).slice(-30);
+          // Load existing conversation
+          let existingMessages: AssistantMessage[] = [];
+          const chatKey = postId || filename.replace(".md", "");
+
+          if (supabaseAdmin && userId && postId) {
+            const { data } = await supabaseAdmin
+              .from("conversations")
+              .select("messages")
+              .eq("post_id", postId)
+              .eq("user_id", userId)
+              .single();
+            existingMessages = ((data?.messages as AssistantMessage[]) || []).slice(-30);
+          } else {
+            existingMessages = (await loadConversation(chatKey)).slice(-30);
+          }
 
           const userMessage: AssistantMessage = {
             role: "user",
@@ -825,8 +919,23 @@ Bun.serve({
           };
           const allMessages = [...existingMessages, userMessage];
 
+          // Helper to save conversation (Supabase or file)
+          const saveChat = async (msgs: AssistantMessage[]) => {
+            if (supabaseAdmin && userId && postId) {
+              await supabaseAdmin
+                .from("conversations")
+                .upsert({
+                  post_id: postId,
+                  user_id: userId,
+                  messages: msgs,
+                }, { onConflict: "post_id" });
+            } else {
+              await saveConversation(chatKey, msgs);
+            }
+          };
+
           // Save user message immediately
-          await saveConversation(slug, allMessages);
+          await saveChat(allMessages);
 
           // Create pi agent session with document context
           const session = await createWriterSession(markdown || "");
@@ -905,7 +1014,7 @@ Bun.serve({
                   highlights: highlights.length > 0 ? highlights : undefined,
                   timestamp: new Date().toISOString(),
                 };
-                await saveConversation(slug, [...allMessages, assistantMessage]);
+                await saveChat([...allMessages, assistantMessage]);
 
                 write(`event: done\ndata: ${JSON.stringify({ ok: true })}\n\n`);
               } catch (error: any) {

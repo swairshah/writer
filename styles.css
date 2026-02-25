@@ -605,7 +605,7 @@ body.dark .editor-wrap .tiptap a:hover {
 /* ── Highlight Popover ────────────────────────────────────── */
 
 .popover {
-  position: fixed;
+  position: absolute;
   transform: translateX(-50%);
   z-index: 300;
   background: #fff;
