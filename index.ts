@@ -1,9 +1,125 @@
 import index from "./index.html";
 import { mkdir, readdir } from "node:fs/promises";
 import { marked } from "marked";
+import Anthropic from "@anthropic-ai/sdk";
 
 const MARKDOWN_DIR = "./markdown";
 const HTML_DIR = "./posts";
+const CONVERSATIONS_DIR = "./conversations";
+
+// ── Anthropic setup ────────────────────────────────────────
+
+const anthro = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const MODEL = "claude-sonnet-4-6";
+
+type HighlightData = {
+  id: string;
+  type: string;
+  matchText: string;
+  comment: string;
+  suggestedEdit?: string;
+};
+
+type AssistantMessage = {
+  role: "user" | "assistant";
+  content: string;
+  highlights?: HighlightData[];
+  timestamp: string;
+};
+
+const HIGHLIGHT_TOOL: Anthropic.Messages.Tool = {
+  name: "add_highlight",
+  description:
+    "Highlight a passage in the writer's text to ask a question, make a suggestion, or propose an edit. " +
+    "The matchText MUST be an exact verbatim substring from the document. Use sparingly (1-4 per response).",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      type: {
+        type: "string",
+        enum: ["question", "suggestion", "edit", "voice", "weakness", "evidence", "wordiness", "factcheck"],
+        description:
+          'question = unclear intent, suggestion = structural improvement, edit = specific text replacement, voice = different from writer\'s voice, weakness = weakest argument, evidence = needs examples/data, wordiness = could be shorter (provide suggestedEdit), factcheck = may need citation',
+      },
+      matchText: {
+        type: "string",
+        description: "EXACT verbatim substring from the document to highlight. Must match character-for-character.",
+      },
+      comment: {
+        type: "string",
+        description: "The question, suggestion, or explanation shown to the writer.",
+      },
+      suggestedEdit: {
+        type: "string",
+        description: "Replacement text. Only provide for type=edit or type=wordiness.",
+      },
+    },
+    required: ["type", "matchText", "comment"],
+  },
+};
+
+const SYSTEM_PROMPT = `You are a thoughtful writing assistant for a blog writer. You're the kind of reader every writer wishes they had — someone who pays close attention, asks the questions that unlock better thinking, and isn't afraid to point out where the writing falls short. You respond with both chat messages and inline highlights on their text.
+
+Your role:
+- Ask probing questions that help the writer think deeper
+- Point out structural issues, unclear arguments, or opportunities
+- Never rewrite their text for them (unless using the edit or wordiness highlight for small, specific improvements)
+- Keep chat responses to 1-2 short paragraphs. Shorter is better.
+- When it's natural, end your response with a question that invites the writer to keep thinking
+- Use highlights sparingly: 1-4 per response, only when genuinely useful
+- You can respond with chat-only messages when appropriate
+
+Highlight types:
+- "question" (blue): Something is unclear, or you want the writer to reflect
+- "suggestion" (yellow): Structural or conceptual improvement
+- "edit" (green): A specific, small text replacement — always provide suggestedEdit
+- "voice" (purple): A passage that sounds different from the writer's established voice
+- "weakness" (red): The weakest argument or thinnest section
+- "evidence" (teal): Where specific examples, data, or anecdotes would strengthen
+- "wordiness" (orange): Could say the same in fewer words — always provide suggestedEdit
+- "factcheck" (pink): A claim that may need citation or could be factually wrong
+
+Highlight rules:
+- matchText MUST be an exact verbatim substring from the document
+- If the document is empty or very short, respond with chat only — no highlights
+- For "edit" and "wordiness" types, always provide suggestedEdit
+
+Be direct, intellectually rigorous, but warm. You're a thinking partner, not an editor.`;
+
+function stripMarkdown(md: string): string {
+  return md
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s+/gm, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .replace(/^---+$/gm, "")
+    .replace(/&nbsp;/g, "")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+async function loadConversation(slug: string): Promise<AssistantMessage[]> {
+  try {
+    const file = Bun.file(`${CONVERSATIONS_DIR}/${slug}.chat.json`);
+    if (await file.exists()) {
+      const data = await file.json();
+      return data.messages || [];
+    }
+  } catch {}
+  return [];
+}
+
+async function saveConversation(slug: string, messages: AssistantMessage[]): Promise<void> {
+  await mkdir(CONVERSATIONS_DIR, { recursive: true });
+  await Bun.write(
+    `${CONVERSATIONS_DIR}/${slug}.chat.json`,
+    JSON.stringify({ messages, updatedAt: new Date().toISOString() }, null, 2)
+  );
+}
 const blogCss = await Bun.file("./blog.css").text();
 
 const themeToggleScript = `
@@ -497,7 +613,15 @@ Bun.serve({
         try {
           const filename = req.params.filename;
           const content = await Bun.file(`${MARKDOWN_DIR}/${filename}`).text();
-          return new Response(JSON.stringify({ content }), {
+          const baseName = filename.replace(".md", "");
+          let scratchpad = "";
+          try {
+            const spFile = Bun.file(`${MARKDOWN_DIR}/${baseName}.scratchpad.md`);
+            if (await spFile.exists()) {
+              scratchpad = await spFile.text();
+            }
+          } catch {}
+          return new Response(JSON.stringify({ content, scratchpad }), {
             headers: { "Content-Type": "application/json" },
           });
         } catch (error) {
@@ -511,7 +635,7 @@ Bun.serve({
     "/api/save": {
       POST: async (req) => {
         try {
-          const { filename, markdown, html, existingFilename } = await req.json();
+          const { filename, markdown, html, scratchpad, existingFilename } = await req.json();
 
           if (!filename) {
             return new Response(JSON.stringify({ error: "Filename required" }), {
@@ -534,6 +658,9 @@ Bun.serve({
 
           await Bun.write(`${MARKDOWN_DIR}/${baseName}.md`, markdown);
           await Bun.write(`${HTML_DIR}/${baseName}.html`, html);
+          if (scratchpad) {
+            await Bun.write(`${MARKDOWN_DIR}/${baseName}.scratchpad.md`, scratchpad);
+          }
 
           return new Response(JSON.stringify({
             success: true,
@@ -544,6 +671,197 @@ Bun.serve({
             }
           }), {
             headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          return new Response(JSON.stringify({ error: String(error) }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    "/api/assistant/conversation/:slug": {
+      GET: async (req) => {
+        try {
+          const slug = req.params.slug;
+          const messages = await loadConversation(slug);
+          return new Response(JSON.stringify({ messages }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          return new Response(JSON.stringify({ messages: [] }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    "/api/assistant/chat": {
+      POST: async (req) => {
+        try {
+          const { filename, message, markdown } = await req.json();
+          if (!filename || !message) {
+            return new Response(JSON.stringify({ error: "filename and message required" }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          const slug = filename.replace(".md", "");
+          const existingMessages = (await loadConversation(slug)).slice(-30);
+
+          // Build system context with the document
+          let systemContent = SYSTEM_PROMPT;
+          const strippedContent = stripMarkdown((markdown || "").trim());
+          if (strippedContent) {
+            systemContent += `\n\n---\n\n## Current Document\n\n${strippedContent}`;
+          }
+
+          const userMessage: AssistantMessage = {
+            role: "user",
+            content: message,
+            timestamp: new Date().toISOString(),
+          };
+          const allMessages = [...existingMessages, userMessage];
+
+          // Save user message immediately
+          await saveConversation(slug, allMessages);
+
+          // SSE response
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            async start(controller) {
+              function write(data: string) {
+                try {
+                  controller.enqueue(encoder.encode(data));
+                } catch {}
+              }
+
+              try {
+                const anthropicMessages = allMessages.map((m) => ({
+                  role: m.role as "user" | "assistant",
+                  content: m.content,
+                }));
+
+                let fullTextResponse = "";
+                const highlights: HighlightData[] = [];
+                let highlightCounter = 0;
+
+                const tools: Anthropic.Messages.Tool[] = [HIGHLIGHT_TOOL];
+                const MAX_TOOL_ROUNDS = 5;
+                let messages: Anthropic.Messages.MessageParam[] = anthropicMessages;
+                let continueLoop = true;
+                let toolRound = 0;
+
+                while (continueLoop) {
+                  const response = await anthro.messages.create({
+                    model: MODEL,
+                    max_tokens: 2048,
+                    temperature: 0.7,
+                    system: systemContent,
+                    tools,
+                    messages,
+                    stream: true,
+                  });
+
+                  let currentToolName = "";
+                  let currentToolInput = "";
+                  let currentToolId = "";
+                  const contentBlocks: Anthropic.Messages.ContentBlock[] = [];
+                  let stopReason: string | null = null;
+
+                  for await (const event of response) {
+                    if (event.type === "content_block_start") {
+                      if (event.content_block.type === "tool_use") {
+                        currentToolName = event.content_block.name;
+                        currentToolId = event.content_block.id;
+                        currentToolInput = "";
+                      }
+                    } else if (event.type === "content_block_delta") {
+                      if (event.delta.type === "text_delta") {
+                        fullTextResponse += event.delta.text;
+                        write(`event: text\ndata: ${JSON.stringify({ chunk: event.delta.text })}\n\n`);
+                      } else if (event.delta.type === "input_json_delta") {
+                        currentToolInput += event.delta.partial_json;
+                      }
+                    } else if (event.type === "content_block_stop") {
+                      if (currentToolName && currentToolInput) {
+                        if (currentToolName === "add_highlight") {
+                          try {
+                            const input = JSON.parse(currentToolInput);
+                            const highlight: HighlightData = {
+                              id: `h${++highlightCounter}-${Date.now()}`,
+                              type: input.type,
+                              matchText: input.matchText,
+                              comment: input.comment,
+                              suggestedEdit: input.suggestedEdit || undefined,
+                            };
+                            highlights.push(highlight);
+                            write(`event: highlight\ndata: ${JSON.stringify(highlight)}\n\n`);
+                          } catch {}
+                        }
+                        contentBlocks.push({
+                          type: "tool_use",
+                          id: currentToolId,
+                          name: currentToolName,
+                          input: JSON.parse(currentToolInput || "{}"),
+                        } as Anthropic.Messages.ToolUseBlock);
+                        currentToolName = "";
+                        currentToolInput = "";
+                      }
+                    } else if (event.type === "message_delta") {
+                      stopReason = event.delta.stop_reason;
+                    }
+                  }
+
+                  if (stopReason === "tool_use") {
+                    toolRound++;
+                    if (toolRound >= MAX_TOOL_ROUNDS) {
+                      continueLoop = false;
+                      break;
+                    }
+                    const toolBlocks = contentBlocks.filter(
+                      (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use"
+                    );
+                    const toolResults: Anthropic.Messages.ToolResultBlockParam[] = toolBlocks.map((block) => ({
+                      type: "tool_result" as const,
+                      tool_use_id: block.id,
+                      content: "Highlight added successfully.",
+                    }));
+                    messages = [
+                      ...messages,
+                      { role: "assistant", content: contentBlocks },
+                      { role: "user", content: toolResults },
+                    ];
+                  } else {
+                    continueLoop = false;
+                  }
+                }
+
+                // Save complete conversation
+                const assistantMessage: AssistantMessage = {
+                  role: "assistant",
+                  content: fullTextResponse,
+                  highlights: highlights.length > 0 ? highlights : undefined,
+                  timestamp: new Date().toISOString(),
+                };
+                await saveConversation(slug, [...allMessages, assistantMessage]);
+
+                write(`event: done\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+              } catch (error: any) {
+                console.error("Assistant stream error:", error?.message);
+                write(`event: error\ndata: ${JSON.stringify({ error: "Stream failed" })}\n\n`);
+              } finally {
+                controller.close();
+              }
+            },
+          });
+
+          return new Response(stream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
           });
         } catch (error) {
           return new Response(JSON.stringify({ error: String(error) }), {
