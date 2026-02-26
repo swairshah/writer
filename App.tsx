@@ -1021,6 +1021,7 @@ function App() {
   // Keyboard shortcuts
   const [chatOpen, setChatOpen] = useState(false);
   const clearChatRef = useRef<(() => void) | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -1244,11 +1245,7 @@ function App() {
 
           <button
             className="settings-btn clear-chat-btn"
-            onClick={() => {
-              if (clearChatRef.current && confirm("Clear assistant conversation? This can't be undone.")) {
-                clearChatRef.current();
-              }
-            }}
+            onClick={() => setShowClearConfirm(true)}
             title="Clear assistant chat"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1325,6 +1322,23 @@ function App() {
         authFetch={authFetch}
         clearChatRef={clearChatRef}
       />
+
+      {/* Clear chat confirm */}
+      {showClearConfirm && (
+        <div className="modal-overlay" onClick={() => setShowClearConfirm(false)}>
+          <div className="modal modal-confirm" onClick={(e) => e.stopPropagation()}>
+            <p className="confirm-text">Clear assistant conversation?</p>
+            <p className="confirm-subtext">This can't be undone.</p>
+            <div className="confirm-actions">
+              <button className="confirm-cancel" onClick={() => setShowClearConfirm(false)}>Cancel</button>
+              <button className="confirm-ok" onClick={() => {
+                clearChatRef.current?.();
+                setShowClearConfirm(false);
+              }}>Clear</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Load modal */}
       {showLoadModal && (
