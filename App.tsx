@@ -291,6 +291,7 @@ function ChatPanel({
   onToggle,
   session,
   authFetch,
+  clearChatRef,
 }: {
   getMarkdown: () => string;
   currentFilename: string | null;
@@ -300,6 +301,7 @@ function ChatPanel({
   onToggle: (open: boolean) => void;
   session: Session | null;
   authFetch: (url: string, options?: RequestInit) => Promise<Response>;
+  clearChatRef: React.MutableRefObject<(() => void) | null>;
 }) {
   const handleSetExpanded = useCallback((open: boolean) => {
     onToggle(open);
@@ -312,6 +314,24 @@ function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Expose clear chat function to parent
+  useEffect(() => {
+    clearChatRef.current = () => {
+      abortRef.current?.abort();
+      setMessages([]);
+      setInput("");
+      inputValueRef.current = "";
+      // Clear on server too
+      const chatKey = postId || currentFilename;
+      if (chatKey) {
+        authFetch(`/api/assistant/conversation/${encodeURIComponent(chatKey)}`, {
+          method: "DELETE",
+        }).catch(() => {});
+      }
+    };
+    return () => { clearChatRef.current = null; };
+  }, [postId, currentFilename, authFetch, clearChatRef]);
 
   // Load conversation when file changes
   useEffect(() => {
@@ -1000,6 +1020,7 @@ function App() {
 
   // Keyboard shortcuts
   const [chatOpen, setChatOpen] = useState(false);
+  const clearChatRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -1221,6 +1242,22 @@ function App() {
             )}
           </div>
 
+          <button
+            className="settings-btn clear-chat-btn"
+            onClick={() => {
+              if (clearChatRef.current && confirm("Clear assistant conversation? This can't be undone.")) {
+                clearChatRef.current();
+              }
+            }}
+            title="Clear assistant chat"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 5H9l-7 7 7 7h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Z" />
+              <line x1="18" y1="9" x2="12" y2="15" />
+              <line x1="12" y1="9" x2="18" y2="15" />
+            </svg>
+          </button>
+
           <button className="settings-btn" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))} title="Toggle theme">
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
           </button>
@@ -1286,6 +1323,7 @@ function App() {
         onToggle={setChatOpen}
         session={session}
         authFetch={authFetch}
+        clearChatRef={clearChatRef}
       />
 
       {/* Load modal */}

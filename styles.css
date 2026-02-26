@@ -185,6 +185,15 @@ body.dark .word-count {
 .settings-btn.save-error { color: #ef4444; }
 .settings-btn:disabled { opacity: 0.7; cursor: not-allowed; }
 
+.settings-btn.clear-chat-btn {
+  opacity: 0.5;
+}
+.settings-btn.clear-chat-btn:hover {
+  opacity: 1;
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
 /* ── Shortcuts popover ────────────────────────────────────── */
 
 .shortcuts-wrap {
@@ -401,9 +410,13 @@ body.dark .editor-wrap .tiptap .is-editor-empty:first-child::before {
   font-weight: 400;
   text-transform: uppercase;
   letter-spacing: 3px;
-  margin: 1.4em 0 0.6em;
+  margin: 0.6em 0 0.6em;
   line-height: 1.2;
   color: var(--text-primary);
+}
+
+.editor-wrap .tiptap h1:first-child {
+  margin-top: 0;
 }
 
 .editor-wrap .tiptap h2 {

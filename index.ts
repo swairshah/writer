@@ -876,6 +876,32 @@ Bun.serve({
           });
         }
       },
+      DELETE: async (req: any) => {
+        try {
+          const authResult = SUPABASE_URL ? await requireAuth(req) : null;
+          if (authResult instanceof Response) return authResult;
+          const userId = authResult?.id;
+          const postId = req.params.slug;
+
+          if (supabaseAdmin && userId) {
+            await supabaseAdmin
+              .from("conversations")
+              .delete()
+              .eq("post_id", postId)
+              .eq("user_id", userId);
+          } else {
+            // File-based: overwrite with empty
+            await saveConversation(postId, []);
+          }
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          return new Response(JSON.stringify({ error: String(error) }), {
+            status: 500, headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
     },
     "/api/assistant/chat": {
       POST: async (req) => {
