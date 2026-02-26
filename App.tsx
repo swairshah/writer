@@ -755,6 +755,7 @@ function App() {
   const pagesRef = useRef<Record<string, string>>(EMPTY_PAGES);
   const activeTabRef = useRef("writing");
   const switchingRef = useRef(false);
+  const initialLoadDone = useRef(false);
 
   // Highlights state
   const [highlights, setHighlights] = useState<Highlight[]>([]);
@@ -863,9 +864,10 @@ function App() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [shortcutsOpen]);
 
-  // Load most recent post on startup
+  // Load most recent post on startup (runs only once)
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading || !editor || initialLoadDone.current) return;
+    initialLoadDone.current = true;
     authFetch("/api/posts")
       .then((r) => r.json())
       .then((posts) => {
@@ -976,6 +978,26 @@ function App() {
     }
   };
 
+  // Autosave: save 3 seconds after the user stops typing
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!editor || saveStatus === "saving") return;
+    // Only autosave if there's actual content and a change happened
+    const text = editor.getText().trim();
+    if (!text) return;
+
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => {
+      if (saveStatus !== "saving") {
+        handleSave();
+      }
+    }, 3000);
+
+    return () => {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    };
+  }, [pages]); // triggers on every keystroke via onUpdate -> setPages
+
   // Keyboard shortcuts
   const [chatOpen, setChatOpen] = useState(false);
 
@@ -1060,7 +1082,11 @@ function App() {
     pagesRef.current = freshPages;
     setActiveTab("writing");
     activeTabRef.current = "writing";
-    editor.commands.setContent("", { contentType: "markdown" });
+    switchingRef.current = true;
+    editor.commands.clearContent();
+    editor.commands.setNode("paragraph");
+    editor.commands.focus("start");
+    setTimeout(() => { switchingRef.current = false; }, 50);
     setWordCount(0);
     setCurrentFilename(null);
     setCurrentPostId(null);
