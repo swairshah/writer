@@ -1111,10 +1111,11 @@ Bun.serve({
     "/api/assistant/live-review": {
       POST: async (req: any) => {
         try {
+          console.log("[live-review] request received");
           let userId: string | undefined;
           if (SUPABASE_URL) {
             const authResult = await requireAuth(req);
-            if (authResult instanceof Response) return authResult;
+            if (authResult instanceof Response) { console.log("[live-review] auth failed"); return authResult; }
             userId = authResult.id;
           }
 

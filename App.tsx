@@ -1032,6 +1032,7 @@ function App() {
   const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastReviewedText = useRef("");
   const liveAbort = useRef<AbortController | null>(null);
+  const liveReviewingRef = useRef(false);
 
   // Trigger live review when text changes and live mode is on
   useEffect(() => {
@@ -1040,10 +1041,12 @@ function App() {
 
     liveTimer.current = setTimeout(async () => {
       const text = editor.getText().trim();
+      console.log("[live] timer fired, text length:", text.length, "reviewing:", liveReviewingRef.current);
       // Skip if too short, unchanged, or already reviewing
-      if (text.length < 50 || text === lastReviewedText.current || liveReviewing) return;
+      if (text.length < 50 || text === lastReviewedText.current || liveReviewingRef.current) return;
 
       lastReviewedText.current = text;
+      liveReviewingRef.current = true;
       setLiveReviewing(true);
       liveAbort.current?.abort();
       const controller = new AbortController();
@@ -1051,12 +1054,14 @@ function App() {
 
       try {
         const md = (editor as any).getMarkdown?.() || text;
+        console.log("[live] sending review request...");
         const response = await authFetch("/api/assistant/live-review", {
           method: "POST",
           body: JSON.stringify({ markdown: md }),
           signal: controller.signal,
         });
         const data = await response.json();
+        console.log("[live] response:", data);
         if (data.highlights?.length > 0) {
           // Remove old live highlights, add new ones
           setHighlights((prev) => {
@@ -1066,8 +1071,9 @@ function App() {
           highlightsRef.current = highlightsRef.current.filter((h: any) => !h.live).concat(data.highlights);
         }
       } catch (e: any) {
-        if (e.name !== "AbortError") console.error("Live review error:", e);
+        if (e.name !== "AbortError") console.error("[live] review error:", e);
       } finally {
+        liveReviewingRef.current = false;
         setLiveReviewing(false);
       }
     }, 10000); // 10 seconds after last keystroke
