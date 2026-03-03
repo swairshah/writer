@@ -1130,25 +1130,22 @@ Bun.serve({
           const highlights: any[] = [];
 
           const unsubscribe = session.subscribe((event: any) => {
-            if (event.type === "tool_result") {
-              const toolName = event.toolName || event.tool_name;
-              if (toolName === "add_highlight") {
-                try {
-                  const result = event.result || event.output;
-                  const details = typeof result === "string" ? JSON.parse(result) : result;
-                  const hlData = details?.details?.highlight || details?.highlight || details;
-                  if (hlData?.matchText && hlData?.type) {
-                    highlights.push({
-                      id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                      type: hlData.type,
-                      matchText: hlData.matchText,
-                      comment: hlData.comment,
-                      suggestedEdit: hlData.suggestedEdit || undefined,
-                      live: true,
-                    });
-                  }
-                } catch {}
-              }
+            if (event.type === "tool_execution_end" && event.toolName === "add_highlight" && !event.isError) {
+              try {
+                const result = event.result;
+                const hlData = result?.details?.highlight;
+                if (hlData?.matchText && hlData?.type) {
+                  console.log("[live-review] highlight found:", hlData.type, hlData.matchText.slice(0, 40));
+                  highlights.push({
+                    id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    type: hlData.type,
+                    matchText: hlData.matchText,
+                    comment: hlData.comment,
+                    suggestedEdit: hlData.suggestedEdit || undefined,
+                    live: true,
+                  });
+                }
+              } catch {}
             }
           });
 
