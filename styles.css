@@ -185,6 +185,52 @@ body.dark .word-count {
 .settings-btn.save-error { color: #ef4444; }
 .settings-btn:disabled { opacity: 0.7; cursor: not-allowed; }
 
+/* ── Live feedback toggle ──────────────────────────────────── */
+
+.live-toggle {
+  position: relative;
+  width: auto !important;
+  padding: 0 10px;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  opacity: 0.4;
+  transition: all 200ms;
+}
+
+.live-toggle .live-label {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.live-toggle:hover {
+  opacity: 0.7;
+}
+
+.live-toggle.live-active {
+  opacity: 1;
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+body.dark .live-toggle.live-active {
+  background: rgba(34, 197, 94, 0.08);
+}
+
 .settings-btn.clear-chat-btn {
   opacity: 0.5;
 }
@@ -614,6 +660,24 @@ body.dark .editor-wrap .tiptap a:hover {
   transition: background 150ms ease;
 }
 .highlight-factcheck:hover { background: rgba(233, 30, 99, 0.25); }
+
+/* Live highlights — softer, dotted underline, no background */
+.highlight-live {
+  background: none !important;
+  border-bottom-style: dotted !important;
+  border-bottom-width: 2px !important;
+  opacity: 0.7;
+  transition: opacity 150ms, background 150ms;
+}
+
+.highlight-live:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+body.dark .highlight-live:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
 
 /* ── Highlight Popover ────────────────────────────────────── */
 

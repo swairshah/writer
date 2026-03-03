@@ -27,6 +27,7 @@ type Highlight = {
   comment: string;
   suggestedEdit?: string;
   dismissed?: boolean;
+  live?: boolean;
 };
 
 type ChatMessage = {
@@ -110,9 +111,11 @@ function createHighlightExtension(
                 const toResult = flatOffsetToPos(newState.doc, idx + h.matchText.length);
                 if (!fromResult.found || !toResult.found) continue;
                 if (fromResult.pos >= toResult.pos) continue;
+                const baseClass = HIGHLIGHT_CLASSES[h.type] || "highlight-question";
+                const cls = h.live ? `${baseClass} highlight-live` : baseClass;
                 decorations.push(
                   Decoration.inline(fromResult.pos, toResult.pos, {
-                    class: HIGHLIGHT_CLASSES[h.type] || "highlight-question",
+                    class: cls,
                     "data-highlight-id": h.id,
                   })
                 );
@@ -1023,6 +1026,67 @@ function App() {
   const clearChatRef = useRef<(() => void) | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
+  // Live feedback mode
+  const [liveMode, setLiveMode] = useState(false);
+  const [liveReviewing, setLiveReviewing] = useState(false);
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastReviewedText = useRef("");
+  const liveAbort = useRef<AbortController | null>(null);
+
+  // Trigger live review when text changes and live mode is on
+  useEffect(() => {
+    if (!liveMode || !editor) return;
+    if (liveTimer.current) clearTimeout(liveTimer.current);
+
+    liveTimer.current = setTimeout(async () => {
+      const text = editor.getText().trim();
+      // Skip if too short, unchanged, or already reviewing
+      if (text.length < 50 || text === lastReviewedText.current || liveReviewing) return;
+
+      lastReviewedText.current = text;
+      setLiveReviewing(true);
+      liveAbort.current?.abort();
+      const controller = new AbortController();
+      liveAbort.current = controller;
+
+      try {
+        const md = (editor as any).getMarkdown?.() || text;
+        const response = await authFetch("/api/assistant/live-review", {
+          method: "POST",
+          body: JSON.stringify({ markdown: md }),
+          signal: controller.signal,
+        });
+        const data = await response.json();
+        if (data.highlights?.length > 0) {
+          // Remove old live highlights, add new ones
+          setHighlights((prev) => {
+            const kept = prev.filter((h) => !h.live);
+            return [...kept, ...data.highlights];
+          });
+          highlightsRef.current = highlightsRef.current.filter((h: any) => !h.live).concat(data.highlights);
+        }
+      } catch (e: any) {
+        if (e.name !== "AbortError") console.error("Live review error:", e);
+      } finally {
+        setLiveReviewing(false);
+      }
+    }, 10000); // 10 seconds after last keystroke
+
+    return () => {
+      if (liveTimer.current) clearTimeout(liveTimer.current);
+    };
+  }, [pages, liveMode, editor, authFetch]);
+
+  // Clean up live highlights when live mode is turned off
+  useEffect(() => {
+    if (!liveMode) {
+      setHighlights((prev) => prev.filter((h) => !h.live));
+      highlightsRef.current = highlightsRef.current.filter((h: any) => !h.live);
+      liveAbort.current?.abort();
+      lastReviewedText.current = "";
+    }
+  }, [liveMode]);
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       // Cmd+S / Ctrl+S to save
@@ -1202,6 +1266,16 @@ function App() {
             disabled={saveStatus === "saving"}
           >
             {saveStatus === "saved" ? <CheckIcon /> : <SaveIcon />}
+          </button>
+
+          {/* Live feedback toggle */}
+          <button
+            className={`settings-btn live-toggle ${liveMode ? "live-active" : ""}`}
+            onClick={() => setLiveMode((v) => !v)}
+            title={liveMode ? "Turn off live feedback" : "Turn on live feedback"}
+          >
+            <span className="live-label">LIVE</span>
+            {liveReviewing && <span className="live-dot" />}
           </button>
 
           {/* Shortcuts */}

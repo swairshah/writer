@@ -164,6 +164,46 @@ async function createWriterSession(documentContent: string): Promise<AgentSessio
 
   return session;
 }
+
+const LIVE_REVIEW_PROMPT = `You are a writing assistant doing a quick, silent review of a document in progress. Your ONLY job is to add 1-3 highlights on the most important issues you notice. Do NOT write any chat response — only use the add_highlight tool.
+
+Focus on:
+- The weakest argument or thinnest reasoning
+- Passages that are wordy and could be tightened (provide suggestedEdit)
+- Claims that need evidence or citation
+- Unclear or ambiguous sentences
+
+Rules:
+- ONLY use the add_highlight tool. Do not write any text response.
+- 1-3 highlights maximum. If the writing is solid, use 0 highlights and respond with just "Looks good."
+- matchText must be exact verbatim substring
+- Be genuinely helpful, not nitpicky
+- Skip trivial issues — only flag things that would meaningfully improve the writing`;
+
+async function createLiveReviewSession(documentContent: string): Promise<AgentSession> {
+  let systemPrompt = LIVE_REVIEW_PROMPT;
+  const strippedContent = stripMarkdown((documentContent || "").trim());
+  if (strippedContent) {
+    systemPrompt += `\n\n---\n\n## Current Document\n\n${strippedContent}`;
+  }
+
+  const loader = new DefaultResourceLoader({
+    systemPromptOverride: () => systemPrompt,
+  });
+  await loader.reload();
+
+  const { session } = await createAgentSession({
+    sessionManager: SessionManager.inMemory(),
+    settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
+    authStorage,
+    modelRegistry,
+    customTools: [highlightTool],
+    resourceLoader: loader,
+  });
+
+  return session;
+}
+
 const blogCss = await Bun.file("./blog.css").text();
 
 const themeToggleScript = `
@@ -1062,6 +1102,64 @@ Bun.serve({
           });
         } catch (error) {
           return new Response(JSON.stringify({ error: String(error) }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    "/api/assistant/live-review": {
+      POST: async (req: any) => {
+        try {
+          let userId: string | undefined;
+          if (SUPABASE_URL) {
+            const authResult = await requireAuth(req);
+            if (authResult instanceof Response) return authResult;
+            userId = authResult.id;
+          }
+
+          const { markdown } = await req.json();
+          if (!markdown || markdown.trim().length < 50) {
+            return new Response(JSON.stringify({ highlights: [] }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+
+          const session = await createLiveReviewSession(markdown);
+          const highlights: any[] = [];
+
+          const unsubscribe = session.subscribe((event: any) => {
+            if (event.type === "tool_result") {
+              const toolName = event.toolName || event.tool_name;
+              if (toolName === "add_highlight") {
+                try {
+                  const result = event.result || event.output;
+                  const details = typeof result === "string" ? JSON.parse(result) : result;
+                  const hlData = details?.details?.highlight || details?.highlight || details;
+                  if (hlData?.matchText && hlData?.type) {
+                    highlights.push({
+                      id: `live-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      type: hlData.type,
+                      matchText: hlData.matchText,
+                      comment: hlData.comment,
+                      suggestedEdit: hlData.suggestedEdit || undefined,
+                      live: true,
+                    });
+                  }
+                } catch {}
+              }
+            }
+          });
+
+          await session.prompt("Review the current document. Only use highlights, no chat response.");
+          unsubscribe();
+          session.dispose();
+
+          return new Response(JSON.stringify({ highlights }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          return new Response(JSON.stringify({ highlights: [], error: String(error) }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           });
